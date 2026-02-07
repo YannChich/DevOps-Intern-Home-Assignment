@@ -105,7 +105,7 @@ On each push or pull request to the `main` branch, the pipeline:
 ├── tests/
 │   ├── Dockerfile
 │   └── test_app.py
-├── screenshots/
+├── Resource/screenshots/
 │   ├── nginx-8080.png
 │   └── nginx-8081.png
 ├── .github/
