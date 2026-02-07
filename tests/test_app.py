@@ -3,7 +3,7 @@ import time
 import urllib.request
 import urllib.error
 import os
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 # Basic configuration for the tests
 TARGET_HOST = os.getenv("TARGET_HOST", "nginx")  # Hostname of the Nginx service in Docker network
 PORT_SUCCESS = 8080
@@ -90,6 +90,53 @@ def test_error_server() -> bool:
     return True
 
 
+def test_rate_limiting() -> bool:
+    """
+    Test the rate limiting behavior on the success server:
+    - Send a large number of requests in parallel in a short period of time
+    - Expect at least one request to be rejected with HTTP 429
+    """
+    url = f"http://{TARGET_HOST}:{PORT_SUCCESS}/"
+    print(f"[TEST] Checking rate limiting at {url}")
+
+    # Total number of HTTP requests to send
+    total_requests = 1000
+
+    # Maximum number of worker threads sending requests concurrently
+    max_workers = 200
+
+    limited_status_code = 429
+    limited_count = 0
+    success_count = 0
+
+    def send_request():
+        status_code, _ = http_get(url)
+        return status_code
+
+    # Use a thread pool to issue many requests concurrently
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(send_request) for _ in range(total_requests)]
+
+        for future in as_completed(futures):
+            status_code = future.result()
+            if status_code == limited_status_code:
+                limited_count += 1
+            elif status_code == 200:
+                success_count += 1
+            else:
+                print(f"[ERROR] Unexpected status code during rate limit test: {status_code}")
+                return False
+
+    print(f"[INFO] Rate limiting stats: {limited_count} limited, {success_count} succeeded")
+
+    if limited_count == 0:
+        print("[ERROR] Expected at least one request to be rate limited, but none were.")
+        return False
+
+    print("[OK] Rate limiting active and returning HTTP 429 for excessive requests")
+    return True
+
+
 def main() -> int:
     """
     Entry point for the test script.
@@ -110,11 +157,14 @@ def main() -> int:
     if not test_error_server():
         all_ok = False
 
+    if not test_rate_limiting():
+        all_ok = False
+
     if all_ok:
-        print("[RESULT] All tests passed ✅")
+        print("[RESULT] All tests passed")
         return 0
     else:
-        print("[RESULT] Some tests failed ❌")
+        print("[RESULT] Some tests failed")
         return 1
 
 

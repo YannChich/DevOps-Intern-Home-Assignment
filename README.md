@@ -1,77 +1,130 @@
 # DevOps Intern – Home Assignment (F5)
+## Advanced Features Branch
 
-This repository contains my solution for the DevOps Intern home assignment.
-The objective of this project is to demonstrate fundamental DevOps skills, including containerization, automated testing, Docker Compose orchestration, and CI automation using GitHub Actions.
+This branch (`advanced-features`) contains an extended version of the project implementing
+the optional advanced requirements described in the assignment. The goal of this branch is
+to demonstrate additional Nginx features, experimentation, and engineering reasoning beyond
+the baseline solution available in the `main` branch.
 
 ---
 
 ## Project Overview
 
-The project is composed of the following components:
+In addition to the base implementation, this branch introduces:
 
-- A custom **Nginx Docker image** running two HTTP servers in a single container
-- A **Python-based test container** responsible for validating the expected behavior
-- A **Docker Compose** configuration to orchestrate and network the services
-- A **GitHub Actions CI pipeline** that builds, tests, and publishes artifacts based on test results
+- HTTPS support using a self-signed TLS certificate
+- Rate limiting configuration in Nginx (5 requests per second per client IP)
+- An extended test suite attempting to validate rate limiting behavior
+- Documentation of design choices, trade-offs, and limitations encountered
+
+The `main` branch remains the stable reference implementation for the mandatory requirements.
 
 ---
 
 ## Architecture
 
-The system consists of two containers running on the same Docker network:
+The architecture remains identical to the main branch:
 
-- **Nginx container**
-  - Exposes two HTTP endpoints on different ports
-- **Test container**
-  - Sends HTTP requests to the Nginx container
-  - Determines success or failure based on response validation
+- An **Nginx container** exposing multiple HTTP endpoints
+- A **Python test container** validating server behavior
+- **Docker Compose** used to orchestrate and network the services
+- **GitHub Actions CI** relying on the test container exit code
 
-The CI pipeline relies on the test container exit code as the single source of truth.
-
----
-
-## Nginx Configuration
-
-The Nginx container is based on **Ubuntu**, as required by the assignment, and contains two server blocks:
-
-### Server on port 8080
-- Returns an HTTP **200 OK**
-- Responds with a custom HTML page
-
-### Server on port 8081
-- Always returns an HTTP **500 Internal Server Error**
-
-Screenshots demonstrating both behaviors are available in the `screenshots/` directory.
+Only the Nginx configuration and tests were extended in this branch.
 
 ---
 
-## Automated Tests
+## HTTPS Support
 
-Automated tests are executed from a separate Docker image using Python.
+HTTPS support was added to the Nginx container using a self-signed certificate.
 
-The test script:
-- Waits for the Nginx service to become available
-- Sends HTTP requests to both servers
-- Validates:
-  - Status code and response content for port 8080
-  - Status code for port 8081
-- Exits with:
-  - `0` if all tests pass
-  - `1` if any test fails
+### Implementation details
 
-This exit code is used directly by the CI pipeline.
+- OpenSSL is installed in the Nginx image at build time
+- A self-signed RSA certificate is generated during the image build
+- An HTTPS server block listens on port **8443**
+- The certificate and private key are stored under `/etc/nginx/ssl`
+
+This setup is intended for demonstration and testing purposes only and is not suitable for
+production use.
 
 ---
 
-## Docker Compose
+## Rate Limiting
 
-Docker Compose is used to:
+### Configuration
 
-- Build both Docker images locally
-- Run the Nginx and test containers on the same network
-- Allow inter-container communication using service names
+Rate limiting is implemented using Nginx’s `limit_req_zone` and `limit_req` directives:
 
-To run the project locally:
+```nginx
+limit_req_zone $binary_remote_addr zone=perip:10m rate=5r/s;
+limit_req_status 429;
+```
+
+This configuration limits each client IP to **5 requests per second**.
+
+The rate limit is applied to the main HTTP success endpoint on port 8080:
+
+```nginx
+location / {
+    limit_req zone=perip burst=1 nodelay;
+    ...
+}
+```
+
+When the limit is exceeded, Nginx returns HTTP status **429 (Too Many Requests)**.
+
+---
+
+## Rate Limiting Validation – Tests and Limitations
+
+### Test approach
+
+The Python test suite was extended to attempt validation of the rate limiting behavior by:
+
+- Sending a very large number of HTTP requests
+- Using a high number of concurrent threads
+- Expecting at least one request to be rejected with HTTP 429
+
+This approach aims to simulate a burst of traffic from a single client IP.
+
+### Observed behavior
+
+Despite increasing concurrency (hundreds of threads) and total request count (up to thousands
+of requests), the test was **not able to reliably trigger HTTP 429 responses** while keeping
+the rate limit configured at **5 requests per second**.
+
+### Analysis
+
+This behavior is due to several factors:
+
+- Nginx’s internal rate limiting algorithm (token bucket–based) smooths request handling
+- Network, HTTP, and Docker-related latency reduce the effective request rate
+- Requests are not guaranteed to fall within the same one-second time window, even when sent
+  concurrently from the test container
+
+As a result, the observed effective throughput remains below the configured threshold.
+
+### Conclusion
+
+The rate limiting configuration is correct and active, but validating a **5r/s limit in a
+deterministic way inside an automated CI environment** proved unreliable without modifying
+the rate threshold or introducing a dedicated test endpoint.
+
+This limitation and the attempted mitigation strategies are intentionally documented to
+demonstrate the investigation and reasoning process.
+
+---
+
+## Changing the Rate Limit Threshold
+
+The rate limit can be adjusted by modifying the `rate` parameter in the Nginx configuration:
+
+```nginx
+limit_req_zone $binary_remote_addr zone=perip:10m rate=10r/s;
+```
+
+After changing the value, the Nginx container must be rebuilt and restarted:
 
 ```bash
 docker compose up --build
@@ -79,19 +132,19 @@ docker compose up --build
 
 ---
 
-## CI Pipeline
+## Docker Compose
 
-The CI pipeline is implemented using GitHub Actions and is defined in `.github/workflows/ci.yml`.
+Docker Compose usage is unchanged from the main branch and is used to:
 
-On each push or pull request to the `main` branch, the pipeline:
+- Build the Nginx and test images
+- Run both containers on the same Docker network
+- Allow the test container to access Nginx by service name
 
-1. Checks out the repository
-2. Builds the Docker images
-3. Runs the services using Docker Compose
-4. Uses the test container exit code to determine the result
-5. Publishes an artifact:
-   - `succeeded` if tests pass
-   - `fail` if tests fail
+To run locally:
+
+```bash
+docker compose up --build
+```
 
 ---
 
@@ -106,8 +159,6 @@ On each push or pull request to the `main` branch, the pipeline:
 │   ├── Dockerfile
 │   └── test_app.py
 ├── Resource/screenshots/
-│   ├── nginx-8080.png
-│   └── nginx-8081.png
 ├── .github/
 │   └── workflows/
 │       └── ci.yml
@@ -117,34 +168,17 @@ On each push or pull request to the `main` branch, the pipeline:
 
 ---
 
-## Design Decisions and Assumptions
+## Engineering Notes
 
-- Ubuntu was selected as the Nginx base image to comply with the assignment requirements
-- The test image uses a lightweight Alpine-based Python image to minimize size
-- No external Python dependencies are used
-- Docker Compose service names are used for inter-container communication
-- Tests are deterministic and designed to be easy to understand
-
----
-
-## How to Run Locally
-
-### Requirements
-- Docker
-- Docker Compose (v2)
-
-### Steps
-```bash
-git clone <your-repository-url>
-cd devops-intern-home-assignment
-docker compose up --build
-```
+- The `main` branch should be considered the stable reference solution
+- This branch focuses on experimentation and optional features
+- Limitations encountered during testing are explicitly documented rather than hidden
+- The intent is to show practical understanding, debugging, and trade-off analysis
 
 ---
 
-## Assignment Status
+## Author
 
-- Implemented Nginx Docker image with two server blocks
-- Implemented automated HTTP tests
-- Implemented Docker Compose orchestration
-- Implemented GitHub Actions CI pipeline with conditional artifacts
+DevOps Intern Candidate  
+Computer Science Student
+
