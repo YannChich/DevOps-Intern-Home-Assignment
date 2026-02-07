@@ -1,0 +1,66 @@
+name: CI
+
+# Trigger the workflow on pushes and pull requests to main branch
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build and test with Docker Compose
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: (Optional but common) Set up Docker Buildx for better Docker builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Build images and run tests using Docker Compose
+      # We use --abort-on-container-exit and --exit-code-from tests
+      # so that the exit code of this step reflects the test result.
+      - name: Build and run tests with Docker Compose
+        run: |
+          docker compose version
+          docker compose up --build --abort-on-container-exit --exit-code-from tests
+
+      # Step 4: If tests passed, create a "succeeded" marker file
+      - name: Create success marker
+        if: success()
+        run: |
+          mkdir -p artifacts
+          echo "succeeded" > artifacts/succeeded
+
+      # Step 5: Upload the "succeeded" file as an artifact
+      - name: Upload success artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: succeeded
+          path: artifacts/succeeded
+
+      # Step 6: If tests failed, create a "fail" marker file
+      - name: Create failure marker
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          echo "fail" > artifacts/fail
+
+      # Step 7: Upload the "fail" file as an artifact
+      - name: Upload failure artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fail
+          path: artifacts/fail
+
+      # Step 8: Always clean up Docker Compose resources
+      - name: Clean up Docker Compose
+        if: always()
+        run: |
+          docker compose down --volumes --remove-orphans
