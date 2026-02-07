@@ -175,10 +175,4 @@ docker compose up --build
 - Limitations encountered during testing are explicitly documented rather than hidden
 - The intent is to show practical understanding, debugging, and trade-off analysis
 
----
-
-## Author
-
-DevOps Intern Candidate  
-Computer Science Student
 
