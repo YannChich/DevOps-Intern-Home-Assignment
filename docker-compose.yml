@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  nginx:
+    # Build the Nginx image from the local Dockerfile
+    build:
+      context: ./nginx
+    container_name: f5-nginx
+    ports:
+      # Expose the two Nginx servers on the host (useful for local testing)
+      - "8080:8080"
+    networks:
+      - app-net
+
+  tests:
+    # Build the test image from the local Dockerfile
+    build:
+      context: ./tests
+    container_name: f5-tests
+    depends_on:
+      # Ensure Nginx container is started before running tests
+      - nginx
+    environment:
+      # Hostname used by the test script to reach Nginx
+      - TARGET_HOST=nginx
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
+
